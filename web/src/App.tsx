@@ -238,21 +238,12 @@ const App = () => {
 
         setClassifier({ kind: 'loading', message: 'Reading model metadata…', wasmReady: true })
         const metadata = parseMetadata(await fetchJson(assetPath('models/metadata.json')))
-        const preferredAccelerator: Accelerator = isWebGPUSupported() ? 'webgpu' : 'wasm'
-        let accelerator = preferredAccelerator
-        let fallbackMessage = preferredAccelerator === 'wasm' ? 'WebGPU unavailable, using WASM.' : undefined
+        const accelerator: Accelerator = 'wasm'
+        const fallbackMessage = isWebGPUSupported()
+          ? 'Using WASM to match TensorFlow Lite scores.'
+          : 'WebGPU unavailable, using WASM.'
 
-        try {
-          loadedModel = await loadAndCompile(assetPath(`models/${metadata.model}`), { accelerator })
-        } catch (error) {
-          if (accelerator !== 'webgpu') {
-            throw error
-          }
-
-          accelerator = 'wasm'
-          fallbackMessage = 'WebGPU compile failed, using WASM.'
-          loadedModel = await loadAndCompile(assetPath(`models/${metadata.model}`), { accelerator })
-        }
+        loadedModel = await loadAndCompile(assetPath(`models/${metadata.model}`), { accelerator })
 
         if (cancelled) {
           loadedModel.delete()
