@@ -17,15 +17,15 @@
     "hotdog"
   ],
   "threshold": 0.40152978897094727,
-  "gitSha": "7dbc3ee",
+  "gitSha": "9801632",
   "sizeBytes": {
     "float32": 10203216,
     "int8": 3072128
   },
   "metrics": {
-    "sampled": 1500,
-    "accuracy": 0.962,
-    "hotdogPrecision": 0.834319526627219,
-    "hotdogRecall": 0.8294117647058824
+    "evaluated": 13750,
+    "accuracy": 0.9580363636363637,
+    "hotdogPrecision": 0.8184955141476881,
+    "hotdogRecall": 0.7906666666666666
   }
 }

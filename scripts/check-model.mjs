@@ -70,6 +70,13 @@ try {
   // First commit of the model, or the base predates it. Nothing to compare against.
 }
 
+// Two builds are only comparable when they scored the same images. A metric measured over a
+// different evaluation set differs by sampling noise alone, which would make this gate fire on
+// a methodology change and stay quiet on a real regression of the same magnitude.
+const comparable =
+  typeof metadata.metrics?.evaluated === 'number' &&
+  metadata.metrics.evaluated === previous?.metrics?.evaluated;
+
 const rows = TRACKED_METRICS.map((key) => {
   const current = metadata.metrics?.[key];
   const before = previous?.metrics?.[key];
@@ -80,6 +87,9 @@ const rows = TRACKED_METRICS.map((key) => {
   }
   if (typeof before !== 'number') {
     return `| ${key} | ${current.toFixed(4)} | n/a | new |`;
+  }
+  if (!comparable) {
+    return `| ${key} | ${current.toFixed(4)} | ${before.toFixed(4)} | not comparable |`;
   }
 
   const delta = current - before;

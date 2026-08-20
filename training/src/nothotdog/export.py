@@ -61,7 +61,12 @@ def convert(model: tf.keras.Model, quantize: bool) -> bytes:
 
 
 def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dict:
-    """Compare quantized predictions against the float model on real validation images."""
+    """Compare quantized predictions against the float model on real validation images.
+
+    Scores the entire split rather than a random sample. A sampled estimate moves by several
+    points between runs, which makes the CI regression gate compare noise to noise -- the stream
+    order is irrelevant here precisely because nothing is left out.
+    """
     interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
     input_detail = interpreter.get_input_details()[0]
@@ -69,10 +74,7 @@ def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dic
 
     scores: list[float] = []
     labels: list[float] = []
-    # Must sample with interleaving on. Reading the stream in its natural order takes the
-    # positives block and nothing else, which scores a precision of 1.0 against a sample that
-    # contains no negatives to be wrong about.
-    for images, label in image_pipeline(embeddings_split, batch=1, shuffle=True).take(1500):
+    for images, label in image_pipeline(embeddings_split, batch=1, shuffle=False):
         value = images.numpy().astype(input_detail["dtype"])
         if input_detail["dtype"] in (np.int8, np.uint8):
             scale, zero = input_detail["quantization"]
@@ -94,7 +96,7 @@ def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dic
     fn = int(((predictions == 0) & (truth == 1)).sum())
     correct = int((predictions == truth).sum())
     return {
-        "sampled": len(scores),
+        "evaluated": len(scores),
         "accuracy": correct / len(scores) if scores else 0.0,
         "hotdogPrecision": tp / (tp + fp) if tp + fp else 0.0,
         "hotdogRecall": tp / (tp + fn) if tp + fn else 0.0,
