@@ -422,7 +422,7 @@ const LiveClassifier = ({
       pixelFormat="rgb"
       preview
       resizeMode="cover"
-      style={StyleSheet.absoluteFill}
+      style={styles.cameraPreview}
     />
   );
 };
@@ -473,6 +473,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     left: 0,
     padding: 24,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  cameraPreview: {
+    bottom: 0,
+    left: 0,
+    opacity: 0.32,
     position: 'absolute',
     right: 0,
     top: 0,
