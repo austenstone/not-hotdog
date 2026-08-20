@@ -14,7 +14,7 @@ import json
 
 import numpy as np
 import tensorflow as tf
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import roc_curve
 
 from .augment import to_model_input
 from .config import (
@@ -24,7 +24,7 @@ from .config import (
     IMAGE_SHAPE,
     NONFOOD_TAKE,
     SEED,
-    TARGET_PRECISION,
+    TARGET_FPR,
     ensure_dirs,
 )
 from .embed import base_model, cache_path, is_hotdog, prepare
@@ -52,16 +52,22 @@ def load_cache(split: str) -> dict[str, np.ndarray]:
 
 
 def select_threshold(labels: np.ndarray, scores: np.ndarray) -> float:
-    """Pick the operating point.
+    """Pick the operating point by false-positive rate, not precision.
 
-    A false "HOTDOG" is the funnier and more damaging failure, so we buy precision with recall
-    rather than maximising F1.
+    A false "HOTDOG" is the funnier and more damaging failure, so we still buy correctness with
+    recall. But precision is a function of class prevalence, and the prevalence in this validation
+    set is an artefact of how the negatives were curated (~8 negatives per hotdog) rather than
+    anything a user experiences. Someone pointing a camera at their lunch has a completely
+    different prior. Tuning to a precision target therefore optimises against a number that does
+    not transfer.
+
+    False-positive rate is prevalence-independent: "how often does a non-hotdog trigger the
+    overlay" means the same thing here and in the wild. So we cap FPR and take the best recall
+    available under that cap.
     """
-    precision, recall, thresholds = precision_recall_curve(labels, scores)
-    viable = np.where(precision[:-1] >= TARGET_PRECISION)[0]
-    if len(viable) == 0:
-        return float(thresholds[int(np.argmax(precision[:-1]))])
-    best = viable[int(np.argmax(recall[viable]))]
+    fpr, tpr, thresholds = roc_curve(labels, scores)
+    viable = np.where(fpr <= TARGET_FPR)[0]
+    best = viable[int(np.argmax(tpr[viable]))]
     return float(thresholds[best])
 
 
@@ -131,7 +137,9 @@ def image_pipeline(split: str, batch: int, shuffle: bool) -> tf.data.Dataset:
     return ds.batch(batch).prefetch(AUTOTUNE)
 
 
-def finetune(model: tf.keras.Model, epochs: int, batch: int) -> tf.keras.Model:
+def finetune(
+    model: tf.keras.Model, epochs: int, batch: int, steps: int, validation_steps: int
+) -> tf.keras.Model:
     base = model.get_layer("mobilenetv2_1.00_224")
     base.trainable = True
     for layer in base.layers[:-FINETUNE_LAYERS]:
@@ -151,9 +159,10 @@ def finetune(model: tf.keras.Model, epochs: int, batch: int) -> tf.keras.Model:
         ],
     )
     model.fit(
-        image_pipeline("train", batch, shuffle=True),
-        validation_data=image_pipeline("validation", batch, shuffle=False),
+        image_pipeline("train", batch, shuffle=True).repeat(),
+        validation_data=image_pipeline("validation", batch, shuffle=False).take(validation_steps),
         epochs=epochs,
+        steps_per_epoch=steps,
         verbose=1,
     )
     return model
@@ -164,6 +173,10 @@ def main() -> None:
     parser.add_argument("--head-epochs", type=int, default=40)
     parser.add_argument("--finetune-epochs", type=int, default=0)
     parser.add_argument("--finetune-batch", type=int, default=32)
+    # Fine-tuning is the only genuinely slow step (no GPU), so it is bounded by step count rather
+    # than by full passes over the 48k training images.
+    parser.add_argument("--finetune-steps", type=int, default=300)
+    parser.add_argument("--finetune-validation-steps", type=int, default=60)
     args = parser.parse_args()
 
     ensure_dirs()
@@ -171,7 +184,13 @@ def main() -> None:
     model = assemble(head)
 
     if args.finetune_epochs > 0:
-        model = finetune(model, args.finetune_epochs, args.finetune_batch)
+        model = finetune(
+            model,
+            args.finetune_epochs,
+            args.finetune_batch,
+            args.finetune_steps,
+            args.finetune_validation_steps,
+        )
         validation = load_cache("validation")
         scores = model.predict(
             image_pipeline("validation", args.finetune_batch, shuffle=False), verbose=0
@@ -181,7 +200,7 @@ def main() -> None:
     path = ARTIFACT_DIR / "not-hotdog.keras"
     model.save(path)
     (ARTIFACT_DIR / "threshold.json").write_text(
-        json.dumps({"threshold": threshold, "targetPrecision": TARGET_PRECISION, **metrics}, indent=2)
+        json.dumps({"threshold": threshold, "targetFpr": TARGET_FPR, **metrics}, indent=2)
     )
     print(f"threshold {threshold:.4f} -> {path}")
 

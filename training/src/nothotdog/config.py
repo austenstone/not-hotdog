@@ -67,7 +67,9 @@ CACHE_DIR = Path(os.environ.get("NOTHOTDOG_CACHE", TRAINING_ROOT / "cache"))
 ARTIFACT_DIR = Path(os.environ.get("NOTHOTDOG_ARTIFACTS", TRAINING_ROOT / "artifacts"))
 MODELS_DIR = REPO_ROOT / "models"
 
-TARGET_PRECISION = 0.97
+# Cap on how often a non-hotdog trips the overlay. Prevalence-independent, unlike precision,
+# so it means the same thing on this validation set and on a real camera.
+TARGET_FPR = 0.02
 SEED = 1337
 
 
