@@ -43,8 +43,8 @@ def representative_dataset():
 
 def convert(model: tf.keras.Model, quantize: bool) -> bytes:
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
     if quantize:
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.representative_dataset = representative_dataset
         converter.target_spec.supported_ops = [
             tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
@@ -62,7 +62,10 @@ def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dic
 
     scores: list[float] = []
     labels: list[float] = []
-    for images, label in image_pipeline(embeddings_split, batch=1, shuffle=False).take(1500):
+    # Must sample with interleaving on. Reading the stream in its natural order takes the
+    # positives block and nothing else, which scores a precision of 1.0 against a sample that
+    # contains no negatives to be wrong about.
+    for images, label in image_pipeline(embeddings_split, batch=1, shuffle=True).take(1500):
         value = images.numpy().astype(input_detail["dtype"])
         if input_detail["dtype"] in (np.int8, np.uint8):
             scale, zero = input_detail["quantization"]

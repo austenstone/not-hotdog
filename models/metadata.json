@@ -1,0 +1,31 @@
+{
+  "model": "not-hotdog.tflite",
+  "inputShape": [
+    1,
+    224,
+    224,
+    3
+  ],
+  "inputDtype": "float32",
+  "normalization": {
+    "mode": "mobilenet_v2",
+    "scale": 0.00784313725490196,
+    "offset": -1.0
+  },
+  "classOrder": [
+    "not_hotdog",
+    "hotdog"
+  ],
+  "threshold": 0.40152978897094727,
+  "gitSha": "59f0cc1",
+  "sizeBytes": {
+    "float32": 10197488,
+    "int8": 3065232
+  },
+  "metrics": {
+    "sampled": 1500,
+    "accuracy": 0.9666666666666667,
+    "hotdogPrecision": 0.8703703703703703,
+    "hotdogRecall": 0.8294117647058824
+  }
+}
