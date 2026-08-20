@@ -68,6 +68,19 @@ def _in_set(label: tf.Tensor, allowed: tf.Tensor) -> tf.Tensor:
     return tf.reduce_any(tf.equal(tf.cast(label, tf.int64), allowed))
 
 
+def _deterministic(ds: tf.data.Dataset) -> tf.data.Dataset:
+    """Force a stable element order.
+
+    shuffle_files=False alone is not enough. TFDS interleaves shards and every map here uses
+    num_parallel_calls, and both are free to emit out of order. Without pinning this the split
+    comes out differently on every run, which changes the enumerate index each image receives
+    and therefore which augmentation seed and screen decision it gets.
+    """
+    options = tf.data.Options()
+    options.deterministic = True
+    return ds.with_options(options)
+
+
 def _take_evenly(ds: tf.data.Dataset, total: int, take: int) -> tf.data.Dataset:
     """Subsample to exactly `take` elements, spread evenly across the source order.
 
@@ -91,14 +104,15 @@ def _food_subset(split: str, allowed: tf.Tensor, group: int) -> tf.data.Dataset:
     # shuffle_files must stay False. TFDS reshuffles the shard order on *every* iteration of the
     # dataset, so any code that reads the same subset twice gets two different orders. That made
     # the split non-reproducible across runs and, worse, silently corrupted the hard negatives
-    # (see _hard_negatives in embed.py). Ordering is handled downstream by sample_from_datasets
-    # and a shuffle buffer, where it is actually needed.
+    # (see _expand_hard_negative in embed.py). Ordering is handled downstream by
+    # sample_from_datasets and a shuffle buffer, where it is actually needed.
     ds = tfds.load("food101", split=split, shuffle_files=False)
     ds = ds.filter(lambda x: _in_set(x["label"], allowed))
-    return ds.map(
+    ds = ds.map(
         lambda x: (_resize(x["image"]), tf.cast(x["label"], tf.int32), tf.constant(group, tf.int32)),
         num_parallel_calls=AUTOTUNE,
     )
+    return _deterministic(ds)
 
 
 def _nonfood(split: str, take: int) -> tf.data.Dataset:
@@ -108,7 +122,7 @@ def _nonfood(split: str, take: int) -> tf.data.Dataset:
         lambda x: (_resize(x["image"]), tf.constant(-1, tf.int32), tf.constant(NONFOOD, tf.int32)),
         num_parallel_calls=AUTOTUNE,
     )
-    return _take_evenly(ds, total, take)
+    return _deterministic(_take_evenly(ds, total, take))
 
 
 def group_datasets(split: str, *, easy_take: int, nonfood_take: int) -> dict[int, tf.data.Dataset]:
@@ -120,7 +134,9 @@ def group_datasets(split: str, *, easy_take: int, nonfood_take: int) -> dict[int
 
     per_class = PER_CLASS_TRAIN if split.startswith("train") else PER_CLASS_VALIDATION
     easy_total = int(easy.shape[0]) * per_class
-    easy_negatives = _take_evenly(_food_subset(split, easy, EASY_NEGATIVE), easy_total, easy_take)
+    easy_negatives = _deterministic(
+        _take_evenly(_food_subset(split, easy, EASY_NEGATIVE), easy_total, easy_take)
+    )
 
     nonfood_split = "train" if split.startswith("train") else "validation"
 

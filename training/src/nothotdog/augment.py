@@ -63,7 +63,7 @@ def screen_effect(image: tf.Tensor, seed: tf.Tensor) -> tf.Tensor:
     Users tried to cheat the original app this way. Rather than scrape photos of monitors we
     synthesize the artefacts it produces: pixel-grid moire, scanlines, glare and a dark bezel.
     """
-    seeds = tf.random.stateless_uniform([5, 2], seed=seed, maxval=2**30, dtype=tf.int32)
+    seeds = tf.random.stateless_uniform([7, 2], seed=seed, maxval=2**30, dtype=tf.int32)
 
     coords = tf.cast(tf.range(IMAGE_SIZE), tf.float32)
     xs = coords[tf.newaxis, :, tf.newaxis]
@@ -75,7 +75,12 @@ def screen_effect(image: tf.Tensor, seed: tf.Tensor) -> tf.Tensor:
     moire = tf.sin(projected * freq) * tf.sin(xs * freq * 0.97) * 0.09
     image = image + moire
 
-    scanlines = tf.sin(ys * math.pi) * 0.05
+    # `sin(ys * pi)` was zero at every row, because ys is an integer pixel index and sin(n*pi) == 0.
+    # The scanlines were a no-op. A real panel's lines land at a few pixels per period and at an
+    # arbitrary phase relative to the crop, so both are randomised per image.
+    period = tf.random.stateless_uniform([], seed=seeds[5], minval=2.4, maxval=5.0)
+    phase = tf.random.stateless_uniform([], seed=seeds[6], minval=0.0, maxval=2.0 * math.pi)
+    scanlines = tf.sin(ys * (2.0 * math.pi / period) + phase) * 0.05
     image = image - scanlines
 
     gx = tf.random.stateless_uniform([], seed=seeds[2], minval=-1.0, maxval=1.0)

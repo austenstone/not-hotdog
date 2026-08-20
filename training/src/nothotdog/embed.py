@@ -80,11 +80,6 @@ def _expand_plain(index, image, label, group):
     return tf.data.Dataset.from_tensors((image, label, group))
 
 
-def _expand_screened_negative(index, image, label, group):
-    image = screen_effect(augment(image, _seed_for(index, 0)), _seed_for(index, 300))
-    return tf.data.Dataset.from_tensors((image, label, group))
-
-
 def _expand_hard_negative(index, image, label, group):
     """One pass over the hard negatives, screening every Nth in place.
 
@@ -121,15 +116,11 @@ def _streams(split: str, easy_take: int, nonfood_take: int) -> list[tf.data.Data
 
     # Screen artefacts are sprinkled onto hard negatives too. Without this the head would learn
     # that moire means hotdog rather than learning what a screen looks like.
-    hard = groups[HARD_NEGATIVE].enumerate()
     streams = [
         groups[HOTDOG].enumerate().flat_map(lambda i, x: _expand_positive(i, x[0], x[1], x[2])),
-        hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY != 0).flat_map(
-            lambda i, x: _expand_plain(i, x[0], x[1], x[2])
-        ),
-        hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY == 0).flat_map(
-            lambda i, x: _expand_screened_negative(i, x[0], x[1], x[2])
-        ),
+        groups[HARD_NEGATIVE]
+        .enumerate()
+        .flat_map(lambda i, x: _expand_hard_negative(i, x[0], x[1], x[2])),
     ]
     streams.extend(
         ds.enumerate().flat_map(lambda i, x: _expand_plain(i, x[0], x[1], x[2]))
@@ -163,12 +154,9 @@ def _stream_weights(split: str, easy_take: int, nonfood_take: int) -> list[float
     sizes are known statically and need no pass over the data.
     """
     per_class = PER_CLASS_TRAIN if split.startswith("train") else PER_CLASS_VALIDATION
-    hard_total = len(HARD_NEGATIVES) * per_class
-    screened = hard_total // SCREEN_NEGATIVE_EVERY
     counts = [
         per_class * (POSITIVE_VARIANTS + SCREEN_VARIANTS),
-        hard_total - screened,
-        screened,
+        len(HARD_NEGATIVES) * per_class,
         easy_take,
         nonfood_take,
     ]
