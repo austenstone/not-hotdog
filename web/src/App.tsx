@@ -359,12 +359,21 @@ const App = () => {
         const rawProbability = clampProbability(Number(probability))
         const latencyMs = performance.now() - startedAt
 
-        setVerdict((previous) => ({
-          rawProbability,
-          smoothProbability: previous ? previous.smoothProbability * smoothing + rawProbability * (1 - smoothing) : rawProbability,
-          latencyMs,
-          source: inputSource,
-        }))
+        setVerdict((previous) => {
+          // Smoothing exists to stop a live camera flickering between verdicts on noisy frames.
+          // A dropped file is a single decision, so it should read its own score rather than
+          // inheriting momentum from whatever was on screen before it.
+          const isContinuous = inputSource === 'camera' && previous?.source === 'camera'
+
+          return {
+            rawProbability,
+            smoothProbability: isContinuous
+              ? previous.smoothProbability * smoothing + rawProbability * (1 - smoothing)
+              : rawProbability,
+            latencyMs,
+            source: inputSource,
+          }
+        })
       } finally {
         inputTensor.delete()
         if (cpuOutput && !outputTensors.includes(cpuOutput)) {
@@ -531,7 +540,9 @@ const App = () => {
           <h1>{heroText}</h1>
           <p className="confidence">
             {verdict
-              ? `${formatPercent(verdict.smoothProbability)} confidence · raw ${formatPercent(verdict.rawProbability)}`
+              ? verdict.smoothProbability === verdict.rawProbability
+                ? `${formatPercent(verdict.rawProbability)} confidence`
+                : `${formatPercent(verdict.smoothProbability)} confidence · raw ${formatPercent(verdict.rawProbability)}`
               : isReady
                 ? `Threshold ${formatPercent(threshold)}. Bring on the tube steak.`
                 : classifier.message}

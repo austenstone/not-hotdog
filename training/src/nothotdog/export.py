@@ -42,7 +42,14 @@ def representative_dataset():
 
 
 def convert(model: tf.keras.Model, quantize: bool) -> bytes:
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    # Pin the batch dimension to 1. A Keras model exports its batch axis as dynamic (-1), and
+    # LiteRT.js rejects the mismatch at inference time -- the model loads happily and then every
+    # single run fails, which is a miserable way to find out. Wrapping in a fixed-batch input keeps
+    # this on the from_keras_model path, which freezes variables into constants; converting a bare
+    # concrete function instead leaves READ_VARIABLE nodes that fail to invoke.
+    fixed = tf.keras.Sequential([tf.keras.Input(batch_shape=(1, *IMAGE_SHAPE)), model])
+
+    converter = tf.lite.TFLiteConverter.from_keras_model(fixed)
     if quantize:
         converter.optimizations = [tf.lite.Optimize.DEFAULT]
         converter.representative_dataset = representative_dataset
