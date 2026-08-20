@@ -168,6 +168,33 @@ def finetune(
     return model
 
 
+def score_images(model: tf.keras.Model) -> dict[str, np.ndarray]:
+    """Run the full model over the validation images.
+
+    Scoring through the cached embeddings would be much faster, but the cache is only valid while
+    the base network is frozen. After Stage B the base has moved, so cached vectors describe a
+    model that no longer exists — and the evaluation would silently measure the wrong thing.
+    """
+    ds = prepare("validation", EASY_NEGATIVE_TAKE // 4, NONFOOD_TAKE // 4)
+    ds = ds.map(lambda i, l, g: (to_model_input(i), l, g), num_parallel_calls=tf.data.AUTOTUNE)
+
+    scores: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+    groups: list[np.ndarray] = []
+    for images, label, group in ds.batch(64).prefetch(tf.data.AUTOTUNE):
+        scores.append(model(images, training=False).numpy().ravel())
+        labels.append(label.numpy())
+        groups.append(group.numpy())
+
+    group_array = np.concatenate(groups)
+    return {
+        "scores": np.concatenate(scores),
+        "labels": is_hotdog(tf.constant(group_array)).numpy().astype(np.float32),
+        "food101Label": np.concatenate(labels),
+        "group": group_array,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--head-epochs", type=int, default=40)
@@ -191,11 +218,12 @@ def main() -> None:
             args.finetune_steps,
             args.finetune_validation_steps,
         )
-        validation = load_cache("validation")
-        scores = model.predict(
-            image_pipeline("validation", args.finetune_batch, shuffle=False), verbose=0
-        ).ravel()
-        threshold = select_threshold(validation["labels"][: len(scores)], scores)
+        # Scores and labels must come from the same pass. Pairing fresh predictions against the
+        # cached labels relied on two pipelines emitting identical order, which is not a
+        # guarantee worth betting the operating point on.
+        scored = score_images(model)
+        threshold = select_threshold(scored["labels"], scored["scores"])
+        metrics = {"stage": "finetune", "validationCount": int(len(scored["scores"]))}
 
     path = ARTIFACT_DIR / "not-hotdog.keras"
     model.save(path)

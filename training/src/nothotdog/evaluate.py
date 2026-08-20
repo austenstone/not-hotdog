@@ -11,7 +11,7 @@ import tensorflow as tf
 from .config import ARTIFACT_DIR, ensure_dirs
 from .dataset import GROUP_NAMES, food101_labels
 from .embed import SCREENED
-from .train import load_cache
+from .train import score_images
 
 SCREEN_GROUP_NAME = "hotdog_on_screen"
 
@@ -82,11 +82,10 @@ def main() -> None:
 
     ensure_dirs()
     threshold = json.loads((ARTIFACT_DIR / "threshold.json").read_text())["threshold"]
-    data = load_cache("validation")
-
     model = tf.keras.models.load_model(args.model)
-    head = model.get_layer("head") if any(l.name == "head" for l in model.layers) else model
-    scores = head.predict(data["embeddings"], verbose=0).ravel()
+
+    data = score_images(model)
+    scores = data["scores"]
 
     report = evaluate(scores, data, threshold)
     path = ARTIFACT_DIR / "evaluation.json"
