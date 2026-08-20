@@ -1,0 +1,38 @@
+[project]
+name = "nothotdog"
+version = "0.1.0"
+description = "Training pipeline for the Not Hotdog binary image classifier"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "tensorflow==2.21.0",
+    "tensorflow-datasets==4.9.10",
+    "numpy>=2.0",
+    "pillow>=11.0",
+    "scikit-learn>=1.6",
+    "matplotlib>=3.10",
+    "tqdm>=4.67",
+]
+
+# Deliberately NOT included:
+#   tensorflowjs      -> depends on tensorflow-decision-forests, which has no cp313 wheel.
+#                        LiteRT.js runs the .tflite directly in the browser instead.
+#   tensorflow-metal  -> cp312 max, last release 1.2.0, breaks under Keras 3.
+
+[project.scripts]
+nothotdog-dataset = "nothotdog.dataset:main"
+nothotdog-embed = "nothotdog.embed:main"
+nothotdog-train = "nothotdog.train:main"
+nothotdog-evaluate = "nothotdog.evaluate:main"
+nothotdog-export = "nothotdog.export:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nothotdog"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"

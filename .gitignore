@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Training artifacts
+training/data/
+training/cache/
+training/runs/
+training/artifacts/
+*.npy
+*.npz
+*.h5
+*.keras
+saved_model/
+
+# TFDS download cache (can be relocated via TFDS_DATA_DIR)
+tensorflow_datasets/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# React Native
+mobile/ios/Pods/
+mobile/ios/build/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+*.jsbundle
+
+# LiteRT.js wasm assets are copied in at build time
+web/public/wasm/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
