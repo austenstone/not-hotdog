@@ -50,6 +50,20 @@ check(
   `threshold must be between 0 and 1, got ${metadata.threshold}`,
 );
 
+// The threshold is a promise about how often a non-hotdog lights up the overlay, and it is
+// calibrated against the quantized model that actually ships. It is checked absolutely rather
+// than as a regression, because the cap is a product decision and a build that misses it is
+// wrong even if the previous build missed it by more.
+const { falsePositiveRate: fpr, targetFalsePositiveRate: fprTarget } = metadata.metrics ?? {};
+if (typeof fpr === 'number' && typeof fprTarget === 'number') {
+  check(
+    fpr <= fprTarget,
+    `false positive rate is ${(fpr * 100).toFixed(2)}%, over the ${(fprTarget * 100).toFixed(2)}% cap the threshold advertises`,
+  );
+} else {
+  failures.push('metrics.falsePositiveRate and metrics.targetFalsePositiveRate are required');
+}
+
 const size = statSync('models/not-hotdog.tflite').size;
 check(
   size <= SIZE_BUDGET_BYTES,

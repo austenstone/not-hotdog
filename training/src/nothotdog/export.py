@@ -19,9 +19,10 @@ from .config import (
     CLASS_ORDER,
     IMAGE_SHAPE,
     MODELS_DIR,
+    TARGET_FPR,
     ensure_dirs,
 )
-from .train import image_pipeline
+from .train import image_pipeline, select_threshold
 
 REPRESENTATIVE_SAMPLES = 200
 
@@ -60,12 +61,19 @@ def convert(model: tf.keras.Model, quantize: bool) -> bytes:
     return converter.convert()
 
 
-def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dict:
-    """Compare quantized predictions against the float model on real validation images.
+def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> tuple[dict, float]:
+    """Score the split through the quantized model and re-pick the operating point.
 
     Scores the entire split rather than a random sample. A sampled estimate moves by several
     points between runs, which makes the CI regression gate compare noise to noise -- the stream
     order is irrelevant here precisely because nothing is left out.
+
+    The threshold arrives calibrated against the Keras float model, but int8 quantization shifts
+    the score distribution, so that number no longer means what it claimed. Measured on the last
+    export, the float-calibrated threshold gave 2.15% FPR against an advertised 2.0% cap. Since
+    this function already runs the whole split through the int8 interpreter it has every score
+    needed to recalibrate, which costs nothing extra and makes the shipped threshold honest about
+    the model that actually ships. Returns the corrected threshold alongside the metrics.
     """
     interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
@@ -89,18 +97,25 @@ def measure(tflite_model: bytes, embeddings_split: str, threshold: float) -> dic
         labels.append(float(label.numpy().ravel()[0]))
 
     score_array, label_array = np.array(scores), np.array(labels)
-    predictions = (score_array >= threshold).astype(int)
     truth = label_array.astype(int)
+
+    quantized_threshold = select_threshold(label_array, score_array)
+    predictions = (score_array >= quantized_threshold).astype(int)
     tp = int(((predictions == 1) & (truth == 1)).sum())
     fp = int(((predictions == 1) & (truth == 0)).sum())
     fn = int(((predictions == 0) & (truth == 1)).sum())
+    negatives = int((truth == 0).sum())
     correct = int((predictions == truth).sum())
-    return {
+    metrics = {
         "evaluated": len(scores),
         "accuracy": correct / len(scores) if scores else 0.0,
         "hotdogPrecision": tp / (tp + fp) if tp + fp else 0.0,
         "hotdogRecall": tp / (tp + fn) if tp + fn else 0.0,
+        "falsePositiveRate": fp / negatives if negatives else 0.0,
+        "targetFalsePositiveRate": TARGET_FPR,
+        "floatThreshold": threshold,
     }
+    return metrics, quantized_threshold
 
 
 def main() -> None:
@@ -119,7 +134,10 @@ def main() -> None:
     target = MODELS_DIR / "not-hotdog.tflite"
     target.write_bytes(int8_model)
 
-    metrics = {} if args.skip_verify else measure(int8_model, "validation", threshold)
+    metrics: dict = {}
+    if not args.skip_verify:
+        # The exported threshold is the one calibrated against the int8 model, not the float one.
+        metrics, threshold = measure(int8_model, "validation", threshold)
 
     metadata = {
         "model": target.name,

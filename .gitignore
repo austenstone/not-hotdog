@@ -41,3 +41,5 @@ web/public/wasm/
 .DS_Store
 *.swp
 .idea/
+mobile/ios/Podfile.lock
+mobile/ios/*.xcworkspace/
