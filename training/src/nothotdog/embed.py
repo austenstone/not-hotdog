@@ -12,6 +12,7 @@ what a hotdog looks like.
 from __future__ import annotations
 
 import argparse
+import functools
 
 import numpy as np
 import tensorflow as tf
@@ -21,8 +22,11 @@ from .config import (
     CACHE_DIR,
     EASY_NEGATIVE_TAKE,
     EMBEDDING_DIM,
+    HARD_NEGATIVES,
     IMAGE_SHAPE,
     NONFOOD_TAKE,
+    PER_CLASS_TRAIN,
+    PER_CLASS_VALIDATION,
     POSITIVE_VARIANTS,
     SCREEN_LABEL,
     SCREEN_VARIANTS,
@@ -81,36 +85,80 @@ def _expand_screened_negative(index, image, label, group):
     return tf.data.Dataset.from_tensors((image, label, group))
 
 
-def _prepare(split: str, easy_take: int, nonfood_take: int) -> tf.data.Dataset:
-    groups = group_datasets(split, easy_take=easy_take, nonfood_take=nonfood_take)
+def is_hotdog(group):
+    """Map group id to the binary label, honouring SCREEN_LABEL.
 
-    positives = groups[HOTDOG].enumerate().flat_map(
-        lambda i, x: _expand_positive(i, x[0], x[1], x[2])
-    )
+    Shared by the embedding cache and the live image pipeline so Stage A and Stage B can never
+    disagree about whether a hotdog behind glass counts.
+    """
+    positive = tf.equal(group, HOTDOG)
+    if SCREEN_LABEL == "hotdog":
+        positive = positive | tf.equal(group, SCREENED)
+    return positive
+
+
+def _streams(split: str, easy_take: int, nonfood_take: int) -> list[tf.data.Dataset]:
+    groups = group_datasets(split, easy_take=easy_take, nonfood_take=nonfood_take)
 
     # Screen artefacts are sprinkled onto hard negatives too. Without this the head would learn
     # that moire means hotdog rather than learning what a screen looks like.
     hard = groups[HARD_NEGATIVE].enumerate()
-    hard_screened = hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY == 0).flat_map(
-        lambda i, x: _expand_screened_negative(i, x[0], x[1], x[2])
+    streams = [
+        groups[HOTDOG].enumerate().flat_map(lambda i, x: _expand_positive(i, x[0], x[1], x[2])),
+        hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY != 0).flat_map(
+            lambda i, x: _expand_plain(i, x[0], x[1], x[2])
+        ),
+        hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY == 0).flat_map(
+            lambda i, x: _expand_screened_negative(i, x[0], x[1], x[2])
+        ),
+    ]
+    streams.extend(
+        ds.enumerate().flat_map(lambda i, x: _expand_plain(i, x[0], x[1], x[2]))
+        for key, ds in groups.items()
+        if key not in (HOTDOG, HARD_NEGATIVE)
     )
-    hard_plain = hard.filter(lambda i, x: i % SCREEN_NEGATIVE_EVERY != 0).flat_map(
-        lambda i, x: _expand_plain(i, x[0], x[1], x[2])
+    return streams
+
+
+def prepare(
+    split: str, easy_take: int, nonfood_take: int, interleave: bool = False
+) -> tf.data.Dataset:
+    streams = _streams(split, easy_take, nonfood_take)
+    if not interleave:
+        return functools.reduce(lambda a, b: a.concatenate(b), streams)
+
+    # Concatenated streams are strictly class-ordered, so a shuffle buffer would have to exceed
+    # the largest class to mix them. Sampling instead yields mixed batches from a small buffer.
+    return tf.data.Dataset.sample_from_datasets(
+        streams,
+        weights=_stream_weights(split, easy_take, nonfood_take),
+        stop_on_empty_dataset=False,
+        seed=SEED,
     )
 
-    combined = positives.concatenate(hard_plain).concatenate(hard_screened)
-    for key, ds in groups.items():
-        if key in (HOTDOG, HARD_NEGATIVE):
-            continue
-        combined = combined.concatenate(
-            ds.enumerate().flat_map(lambda i, x: _expand_plain(i, x[0], x[1], x[2]))
-        )
 
-    return combined
+def _stream_weights(split: str, easy_take: int, nonfood_take: int) -> list[float]:
+    """Sample each stream in proportion to its size so interleaving preserves the class ratio.
+
+    Food-101 is exactly balanced at 750 train / 250 validation images per class, so the group
+    sizes are known statically and need no pass over the data.
+    """
+    per_class = PER_CLASS_TRAIN if split.startswith("train") else PER_CLASS_VALIDATION
+    hard_total = len(HARD_NEGATIVES) * per_class
+    screened = hard_total // SCREEN_NEGATIVE_EVERY
+    counts = [
+        per_class * (POSITIVE_VARIANTS + SCREEN_VARIANTS),
+        hard_total - screened,
+        screened,
+        easy_take,
+        nonfood_take,
+    ]
+    total = sum(counts)
+    return [c / total for c in counts]
 
 
 def embed_split(split: str, easy_take: int, nonfood_take: int) -> dict[str, np.ndarray]:
-    ds = _prepare(split, easy_take, nonfood_take)
+    ds = prepare(split, easy_take, nonfood_take)
     ds = ds.map(lambda i, l, g: (to_model_input(i), l, g), num_parallel_calls=AUTOTUNE)
     ds = ds.batch(BATCH).prefetch(AUTOTUNE)
 

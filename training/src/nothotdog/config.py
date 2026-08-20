@@ -45,6 +45,11 @@ HARD_NEGATIVES = [
 EASY_NEGATIVE_TAKE = 20_000
 NONFOOD_TAKE = 8_000
 
+# Food-101 is exactly balanced: every one of the 101 classes has 750 train and 250 validation
+# images. Group sizes are therefore known statically, with no pass over the data required.
+PER_CLASS_TRAIN = 750
+PER_CLASS_VALIDATION = 250
+
 # The original app trained on roughly 3k hotdogs. 750 Food-101 hotdogs x 4 deterministic
 # augmented variants lands in the same place.
 POSITIVE_VARIANTS = 4

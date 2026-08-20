@@ -27,7 +27,7 @@ from .config import (
     TARGET_PRECISION,
     ensure_dirs,
 )
-from .embed import _prepare, base_model, cache_path
+from .embed import base_model, cache_path, is_hotdog, prepare
 
 AUTOTUNE = tf.data.AUTOTUNE
 FINETUNE_LAYERS = 30
@@ -118,11 +118,11 @@ def assemble(head: tf.keras.Model) -> tf.keras.Model:
 def image_pipeline(split: str, batch: int, shuffle: bool) -> tf.data.Dataset:
     easy = EASY_NEGATIVE_TAKE if split == "train" else EASY_NEGATIVE_TAKE // 4
     nonfood = NONFOOD_TAKE if split == "train" else NONFOOD_TAKE // 4
-    ds = _prepare(split, easy, nonfood)
+    ds = prepare(split, easy, nonfood, interleave=shuffle)
     ds = ds.map(
         lambda image, label, group: (
             to_model_input(image),
-            tf.cast(tf.equal(group, 0) | tf.equal(group, 4), tf.float32),
+            tf.cast(is_hotdog(group), tf.float32),
         ),
         num_parallel_calls=AUTOTUNE,
     )
