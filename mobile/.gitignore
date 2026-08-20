@@ -55,9 +55,12 @@ yarn-error.log
 
 # Bundle artifact
 *.jsbundle
+*.tflite
+src/assets/models/
 
 # Ruby / CocoaPods
 **/Pods/
+/ios/Pods/
 /vendor/bundle/
 
 # Temporary files created by Metro to check the health of the file watcher

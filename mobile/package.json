@@ -3,17 +3,27 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
+    "preandroid": "node scripts/sync-assets.mjs",
+    "preios": "node scripts/sync-assets.mjs",
+    "prestart": "node scripts/sync-assets.mjs",
+    "prebuild": "node scripts/sync-assets.mjs",
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@react-native/new-app-screen": "0.87.0",
     "react": "19.2.3",
     "react-native": "0.87.0",
-    "@react-native/new-app-screen": "0.87.0",
-    "react-native-safe-area-context": "^5.5.2"
+    "react-native-fast-tflite": "^3.0.1",
+    "react-native-nitro-modules": "^0.36.5",
+    "react-native-safe-area-context": "^5.5.2",
+    "react-native-vision-camera": "^4.7.3",
+    "react-native-worklets-core": "^1.6.3",
+    "vision-camera-resize-plugin": "^3.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
