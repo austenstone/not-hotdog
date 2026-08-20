@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Tensor,
+  getGlobalLiteRtPromise,
   isWebGPUSupported,
   loadAndCompile,
   loadLiteRt,
@@ -136,7 +137,17 @@ const fetchJson = async (url: string) => {
     throw new Error(`${url} returned ${response.status}`)
   }
 
-  return response.json() as Promise<unknown>
+  const contentType = response.headers.get('content-type') ?? ''
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(`${url} was not JSON`)
+  }
+
+  try {
+    return (await response.json()) as unknown
+  } catch {
+    throw new Error(`${url} is not valid JSON`)
+  }
 }
 
 const formatPercent = (value: number) => `${Math.round(value * 100)}%`
@@ -162,6 +173,30 @@ const withLiteRtConsoleFilter = async <T,>(work: () => Promise<T>) => {
     return await work()
   } finally {
     console.error = originalError
+  }
+}
+
+const ensureLiteRtLoaded = async () => {
+  const existingLoad = getGlobalLiteRtPromise()
+
+  if (existingLoad) {
+    await existingLoad
+    return
+  }
+
+  const jspi = await supportsFeature('jspi')
+
+  try {
+    await withLiteRtConsoleFilter(() => loadLiteRt(assetPath('wasm/'), jspi ? { jspi: true } : undefined))
+  } catch (error) {
+    const retryLoad = getGlobalLiteRtPromise()
+
+    if (error instanceof Error && error.message.includes('already loading / loaded') && retryLoad) {
+      await retryLoad
+      return
+    }
+
+    throw error
   }
 }
 
@@ -194,8 +229,7 @@ const App = () => {
       let wasmReady = false
 
       try {
-        const jspi = await supportsFeature('jspi')
-        await withLiteRtConsoleFilter(() => loadLiteRt(assetPath('wasm/'), jspi ? { jspi: true } : undefined))
+        await ensureLiteRtLoaded()
         wasmReady = true
 
         if (cancelled) {
