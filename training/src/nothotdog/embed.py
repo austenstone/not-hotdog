@@ -85,6 +85,25 @@ def _expand_screened_negative(index, image, label, group):
     return tf.data.Dataset.from_tensors((image, label, group))
 
 
+def _expand_hard_negative(index, image, label, group):
+    """One pass over the hard negatives, screening every Nth in place.
+
+    This used to be two branches — `filter(i % N != 0)` and `filter(i % N == 0)` — over the same
+    dataset object. tf.data re-executes the source for each branch, so with a reshuffling source
+    the two branches enumerated *different* orders and the modulo partitioned two unrelated
+    sequences. Measured on the validation hard negatives: 648 images landed in both branches and
+    another 648 landed in neither. The source is deterministic now, but branching a dataset to
+    partition it is the fragile part, so the split happens inside a single element pass instead.
+    """
+    image = augment(image, _seed_for(index, 0))
+    image = tf.cond(
+        tf.equal(index % SCREEN_NEGATIVE_EVERY, 0),
+        lambda: screen_effect(image, _seed_for(index, 300)),
+        lambda: image,
+    )
+    return tf.data.Dataset.from_tensors((image, label, group))
+
+
 def is_hotdog(group):
     """Map group id to the binary label, honouring SCREEN_LABEL.
 

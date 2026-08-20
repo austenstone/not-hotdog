@@ -19,8 +19,9 @@ from .config import (
     IMAGE_SIZE,
     IMAGENETTE_CONFIG,
     NONFOOD_TAKE,
+    PER_CLASS_TRAIN,
+    PER_CLASS_VALIDATION,
     POSITIVE_CLASS,
-    SEED,
     ensure_dirs,
 )
 
@@ -67,8 +68,32 @@ def _in_set(label: tf.Tensor, allowed: tf.Tensor) -> tf.Tensor:
     return tf.reduce_any(tf.equal(tf.cast(label, tf.int64), allowed))
 
 
+def _take_evenly(ds: tf.data.Dataset, total: int, take: int) -> tf.data.Dataset:
+    """Subsample to exactly `take` elements, spread evenly across the source order.
+
+    A shuffle buffer cannot do this job here: the images are already decoded to 224x224x3
+    float32, so a buffer large enough to cover 59k easy negatives would need tens of gigabytes.
+    A too-small buffer silently biases the sample toward whichever classes appear first.
+    Striding by index costs nothing, is deterministic, and takes the same fraction of every
+    class regardless of how the source is ordered.
+    """
+    if take <= 0 or take >= total:
+        return ds
+
+    def keep(i: tf.Tensor, _: tf.Tensor) -> tf.Tensor:
+        i = tf.cast(i, tf.int64)
+        return (i * take) // total != ((i + 1) * take) // total
+
+    return ds.enumerate().filter(keep).map(lambda _, x: x, num_parallel_calls=AUTOTUNE)
+
+
 def _food_subset(split: str, allowed: tf.Tensor, group: int) -> tf.data.Dataset:
-    ds = tfds.load("food101", split=split, shuffle_files=True)
+    # shuffle_files must stay False. TFDS reshuffles the shard order on *every* iteration of the
+    # dataset, so any code that reads the same subset twice gets two different orders. That made
+    # the split non-reproducible across runs and, worse, silently corrupted the hard negatives
+    # (see _hard_negatives in embed.py). Ordering is handled downstream by sample_from_datasets
+    # and a shuffle buffer, where it is actually needed.
+    ds = tfds.load("food101", split=split, shuffle_files=False)
     ds = ds.filter(lambda x: _in_set(x["label"], allowed))
     return ds.map(
         lambda x: (_resize(x["image"]), tf.cast(x["label"], tf.int32), tf.constant(group, tf.int32)),
@@ -77,12 +102,13 @@ def _food_subset(split: str, allowed: tf.Tensor, group: int) -> tf.data.Dataset:
 
 
 def _nonfood(split: str, take: int) -> tf.data.Dataset:
-    ds = tfds.load(IMAGENETTE_CONFIG, split=split, shuffle_files=True)
+    total = tfds.builder(IMAGENETTE_CONFIG).info.splits[split].num_examples
+    ds = tfds.load(IMAGENETTE_CONFIG, split=split, shuffle_files=False)
     ds = ds.map(
         lambda x: (_resize(x["image"]), tf.constant(-1, tf.int32), tf.constant(NONFOOD, tf.int32)),
         num_parallel_calls=AUTOTUNE,
     )
-    return ds.take(take) if take > 0 else ds
+    return _take_evenly(ds, total, take)
 
 
 def group_datasets(split: str, *, easy_take: int, nonfood_take: int) -> dict[int, tf.data.Dataset]:
@@ -92,9 +118,9 @@ def group_datasets(split: str, *, easy_take: int, nonfood_take: int) -> dict[int
     """
     positive, hard, easy = _label_sets()
 
-    easy_negatives = _food_subset(split, easy, EASY_NEGATIVE)
-    if easy_take > 0:
-        easy_negatives = easy_negatives.shuffle(8192, seed=SEED).take(easy_take)
+    per_class = PER_CLASS_TRAIN if split.startswith("train") else PER_CLASS_VALIDATION
+    easy_total = int(easy.shape[0]) * per_class
+    easy_negatives = _take_evenly(_food_subset(split, easy, EASY_NEGATIVE), easy_total, easy_take)
 
     nonfood_split = "train" if split.startswith("train") else "validation"
 
