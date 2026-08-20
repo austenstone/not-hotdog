@@ -1,0 +1,56 @@
+name: Model Eval
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'models/**'
+      - '.github/workflows/model-eval.yml'
+      - 'scripts/check-model.mjs'
+  pull_request:
+    paths:
+      - 'models/**'
+      - '.github/workflows/model-eval.yml'
+      - 'scripts/check-model.mjs'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  model:
+    name: Validate artifact contract
+    runs-on: ubuntu-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Check model contract and diff metrics
+        id: check
+        run: node scripts/check-model.mjs >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment metrics on the pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const body = require('fs').readFileSync(process.env.GITHUB_STEP_SUMMARY, 'utf8');
+            const marker = '<!-- model-eval -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const existing = (await github.rest.issues.listComments({ owner, repo, issue_number }))
+              .data.find((c) => c.body.includes(marker));
+            const payload = `${marker}\n${body}`;
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: payload });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: payload });
+            }
