@@ -111,10 +111,48 @@ a usable model; they do not get you a good one.
 
 ### Threshold is a product decision
 
-A false `HOTDOG` is both the funnier and the more damaging failure, so the operating point targets
-**0.97 precision** on the hotdog class and maximizes recall subject to that — rather than
-maximizing F1. The chosen value is written into `models/metadata.json` and read by both clients,
-so the number can't drift between platforms.
+A false `HOTDOG` is both the funnier and the more damaging failure, so the operating point is
+chosen by **false-positive rate** — the highest recall available while keeping FPR on the negative
+classes at or under **2%** — rather than by maximizing F1.
+
+Targeting FPR instead of precision matters on a skewed dataset. Precision moves with the
+positive/negative ratio, so a precision target quietly encodes the dataset's shape into the
+threshold; FPR is a property of the model alone. Switching from a 0.97-precision target to a 2%
+FPR target lifted recall from 55% to 79% and F1 from 0.70 to 0.81 **without retraining anything** —
+same weights, better-chosen operating point.
+
+The chosen value lands in `models/metadata.json` and is read by both clients, so the number can't
+drift between platforms.
+
+---
+
+## Results
+
+Measured over the full 13,750-image held-out validation split.
+
+| | Threshold | Accuracy | Precision | Recall | F1 |
+| --- | --- | --- | --- | --- | --- |
+| Stage A (head only) | 0.8338 | 0.959 | 0.829 | 0.792 | 0.810 |
+| Stage B (fine-tuned) | 0.4015 | **0.961** | **0.846** | 0.787 | **0.815** |
+| Exported int8 `.tflite` | 0.4015 | 0.958 | 0.818 | 0.791 | 0.804 |
+
+Quantization costs about 0.3 points of accuracy for a **70% smaller** file — 10.20 MB float32 down
+to **3.07 MB** int8.
+
+False positives by group, at the Stage B operating point:
+
+| Group | Rate | Read |
+| --- | --- | --- |
+| Non-food (Imagenette) | **0 / 2,000** | Never fires on a dog, a chainsaw, or a church |
+| Easy negative (other foods) | 23 / 5,000 | 0.5% |
+| Hard negative (lookalikes) | 192 / 5,250 | 3.7% — where essentially all the error lives |
+
+And recall: 782 / 1,000 plain hotdogs, plus **398 / 500 hotdogs photographed through a screen** —
+the synthesized moiré training data works.
+
+Worst lookalikes: `hamburger` 7.3%, `spring_rolls` 6.8%, `lobster_roll_sandwich` 6.7%,
+`club_sandwich` 6.2%. Exactly the bread-adjacent, red/brown, roughly cylindrical foods you'd
+predict, which is the reassuring outcome — the model is failing for legible reasons.
 
 ---
 
@@ -148,6 +186,36 @@ accuracy on a 10:1 dataset is a nearly useless number — a model that always sa
 scores 89%. What matters is the per-group false-positive rate and the `worst lookalikes` table,
 which names the specific foods the model mistakes for a hotdog. That table is the tuning signal:
 if `lobster_roll_sandwich` dominates it, the answer is better augmentation, not more epochs.
+
+---
+
+## Four bugs worth documenting
+
+Every one of these produced plausible-looking output while being wrong, which is the dangerous kind.
+
+**1. The embedding cache is only valid while the base is frozen.** Scoring the head against cached
+embeddings is correct for Stage A and *silently wrong* after fine-tuning — the base has moved, so
+you're measuring a model that no longer exists. It reported 840 false positives where the real
+model produces 215, making a genuine improvement look like a regression that nearly got reverted.
+Evaluation now always runs the full model over real images.
+
+**2. Keras exports a dynamic batch axis, and LiteRT.js rejects it.** `from_keras_model` yields
+input shape `[-1,224,224,3]`; LiteRT.js requires an exact match and fails **at inference, not at
+load**, so the model looks perfectly healthy until the first frame. Fixed by wrapping in
+`Sequential([Input(batch_shape=(1, *IMAGE_SHAPE)), model])`. Converting a bare concrete function
+instead fixes the shape but leaves unfrozen `READ_VARIABLE` nodes that fail to invoke.
+
+**3. `Optimize.DEFAULT` outside the quantize branch makes the size comparison meaningless.** It
+weight-quantizes the "float32" baseline too, so full int8 appeared **7% larger**. The real
+comparison is 10.20 MB → 3.07 MB.
+
+**4. Smoothing state must be scoped to continuous input.** Exponential smoothing is right for a
+camera stream and wrong for a one-shot upload — and the state persisted across uploads, so a 60%
+hotdog rendered `NOT HOTDOG` under a 40% threshold. Invisible to unit tests and invisible in
+Python; only running real images through the real client exposed it.
+
+The through-line: **test the artifact you ship, on the client you ship it on.** Three of these four
+were invisible from inside the training code.
 
 ---
 
