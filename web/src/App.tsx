@@ -143,6 +143,28 @@ const formatPercent = (value: number) => `${Math.round(value * 100)}%`
 
 const clampProbability = (value: number) => Math.min(1, Math.max(0, value))
 
+const isLiteRtLog = (args: Parameters<typeof console.error>) =>
+  typeof args[0] === 'string' && /^(INFO|WARNING): \[/.test(args[0])
+
+const withLiteRtConsoleFilter = async <T,>(work: () => Promise<T>) => {
+  const originalError = console.error
+
+  console.error = (...args: Parameters<typeof console.error>) => {
+    if (isLiteRtLog(args)) {
+      console.info(...args)
+      return
+    }
+
+    originalError(...args)
+  }
+
+  try {
+    return await work()
+  } finally {
+    console.error = originalError
+  }
+}
+
 const App = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -173,7 +195,7 @@ const App = () => {
 
       try {
         const jspi = await supportsFeature('jspi')
-        await loadLiteRt(assetPath('wasm/'), jspi ? { jspi: true } : undefined)
+        await withLiteRtConsoleFilter(() => loadLiteRt(assetPath('wasm/'), jspi ? { jspi: true } : undefined))
         wasmReady = true
 
         if (cancelled) {
