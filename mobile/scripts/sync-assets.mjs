@@ -48,12 +48,13 @@ const writeGeneratedAssets = async () => {
   const modelName = typeof metadata?.model === 'string' ? metadata.model : null
   const hasModel = modelName ? entries.includes(modelName) : false
   const modelRequire = hasModel ? `require(${JSON.stringify(`../assets/models/${modelName}`)}) as number` : 'null'
+  const requireDeclaration = hasModel ? 'declare const require: (path: string) => number\n\n' : ''
   const metadataLiteral = metadata ? JSON.stringify(metadata, null, 2) : 'null'
 
   await mkdir(generatedDir, { recursive: true })
   await writeFile(
     generatedFile,
-    `export const bundledModelAsset: number | null = ${modelRequire}\n\nexport const bundledMetadata = ${metadataLiteral} as unknown\n`,
+    `${requireDeclaration}export const bundledModelAsset: number | null = ${modelRequire}\n\nexport const bundledMetadata = ${metadataLiteral} as unknown\n`,
   )
 }
 

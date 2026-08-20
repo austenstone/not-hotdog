@@ -89,6 +89,10 @@ const parseMetadata = (value: unknown): ModelMetadata => {
     throw new Error('metadata.inputShape must be [1, height, width, channels]');
   }
 
+  if (value.inputShape[3] !== 3) {
+    throw new Error(`Expected 3 input channels, got ${value.inputShape[3]}`);
+  }
+
   if (value.inputDtype !== 'float32') {
     throw new Error('Only float32 model input is supported');
   }
@@ -306,7 +310,9 @@ const LiveClassifier = ({
   const runOnResult = useRunOnJS(onResult, [onResult]);
   const runOnFrameError = useRunOnJS(onFrameError, [onFrameError]);
   const [, inputHeight, inputWidth, channels] = metadata.inputShape;
-  const { classOrder, normalization } = metadata;
+  const hotdogIndex = metadata.classOrder.indexOf('hotdog');
+  const normalizationOffset = metadata.normalization.offset;
+  const normalizationScale = metadata.normalization.scale;
 
   const frameProcessor = useFrameProcessor(
     frame => {
@@ -332,7 +338,7 @@ const LiveClassifier = ({
           });
 
           for (let index = 0; index < pixels.length; index += 1) {
-            pixels[index] = pixels[index] * normalization.scale + normalization.offset;
+            pixels[index] = pixels[index] * normalizationScale + normalizationOffset;
           }
 
           const inputBuffer = pixels.buffer.slice(
@@ -341,7 +347,6 @@ const LiveClassifier = ({
           ) as ArrayBuffer;
           const outputBuffers = boxedModel.unbox().runSync([inputBuffer]);
           const output = new Float32Array(outputBuffers[0]);
-          const hotdogIndex = classOrder.indexOf('hotdog');
           const probability =
             output.length > 1 ? output[hotdogIndex] : output[0] ?? 0;
           const latencyMs = Date.now() - startedAt;
@@ -357,10 +362,11 @@ const LiveClassifier = ({
     [
       boxedModel,
       channels,
-      classOrder,
+      hotdogIndex,
       inputHeight,
       inputWidth,
-      normalization,
+      normalizationOffset,
+      normalizationScale,
       resize,
       runOnFrameError,
       runOnResult,
