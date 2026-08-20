@@ -338,7 +338,9 @@ const LiveClassifier = ({
           });
 
           for (let index = 0; index < pixels.length; index += 1) {
-            pixels[index] = pixels[index] * normalizationScale + normalizationOffset;
+            // The resize plugin returns float32 in [0, 1], but metadata.normalization
+            // is defined in the byte domain [0, 255]. Scale to byte domain first.
+            pixels[index] = pixels[index] * 255 * normalizationScale + normalizationOffset;
           }
 
           const inputBuffer = pixels.buffer.slice(
