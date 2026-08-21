@@ -50,6 +50,7 @@ type Verdict = {
   smoothProbability: number
   latencyMs: number
   source: 'camera' | 'file'
+  session: number
 }
 
 const appBase = import.meta.env.BASE_URL
@@ -207,6 +208,10 @@ const App = () => {
   const frameRef = useRef<number | null>(null)
   const inFlightRef = useRef(false)
   const lastInferenceRef = useRef(0)
+  // Bumped whenever the input changes: camera start, camera stop, or a new file. Inference is
+  // async, so a frame captured before the change can still resolve after it. The token lets a
+  // late result recognise that it belongs to an input nobody is looking at any more.
+  const sessionRef = useRef(0)
   const classifierRef = useRef<ClassifierState>({ kind: 'loading', message: 'Loading LiteRT.js…', wasmReady: false })
 
   const [classifier, setClassifierState] = useState<ClassifierState>(classifierRef.current)
@@ -285,6 +290,7 @@ const App = () => {
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
+    sessionRef.current += 1
     setIsCameraActive(false)
   }, [])
 
@@ -308,6 +314,7 @@ const App = () => {
   const classifySource = useCallback(
     async (source: CanvasImageSource, sourceWidth: number, sourceHeight: number, inputSource: Verdict['source']) => {
       const current = classifierRef.current
+      const session = sessionRef.current
 
       if (current.kind !== 'ready') {
         return
@@ -350,11 +357,21 @@ const App = () => {
         const rawProbability = clampProbability(Number(probability))
         const latencyMs = performance.now() - startedAt
 
+        // The input changed while this ran. Publishing now would let a stopped camera overwrite
+        // the file the user just dropped.
+        if (sessionRef.current !== session) {
+          return
+        }
+
         setVerdict((previous) => {
           // Smoothing exists to stop a live camera flickering between verdicts on noisy frames.
           // A dropped file is a single decision, so it should read its own score rather than
-          // inheriting momentum from whatever was on screen before it.
-          const isContinuous = inputSource === 'camera' && previous?.source === 'camera'
+          // inheriting momentum from whatever was on screen before it. Comparing the session too
+          // means a restarted camera starts fresh instead of resuming the previous stream's EMA.
+          const isContinuous =
+            inputSource === 'camera' &&
+            previous?.source === 'camera' &&
+            previous.session === session
 
           return {
             rawProbability,
@@ -363,6 +380,7 @@ const App = () => {
               : rawProbability,
             latencyMs,
             source: inputSource,
+            session,
           }
         })
       } finally {
