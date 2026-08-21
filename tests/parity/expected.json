@@ -1,0 +1,11 @@
+{
+  "threshold": 0.55078125,
+  "scores": {
+    "easy-negative.png": 0.0,
+    "hard-negative.png": 0.347656,
+    "hotdog-a.png": 0.449219,
+    "hotdog-b.png": 0.046875,
+    "hotdog-on-screen-a.png": 0.421875,
+    "hotdog-on-screen-b.png": 0.867188
+  }
+}
