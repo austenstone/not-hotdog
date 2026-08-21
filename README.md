@@ -189,7 +189,7 @@ if `lobster_roll_sandwich` dominates it, the answer is better augmentation, not 
 
 ---
 
-## Four bugs worth documenting
+## Nine bugs worth documenting
 
 Every one of these produced plausible-looking output while being wrong, which is the dangerous kind.
 
@@ -214,8 +214,62 @@ camera stream and wrong for a one-shot upload — and the state persisted across
 hotdog rendered `NOT HOTDOG` under a 40% threshold. Invisible to unit tests and invisible in
 Python; only running real images through the real client exposed it.
 
-The through-line: **test the artifact you ship, on the client you ship it on.** Three of these four
-were invisible from inside the training code.
+**5. Branching a `tf.data` pipeline to partition it duplicates and drops elements.** The hard
+negatives were split with `filter(i % 7 != 0)` and `filter(i % 7 == 0)` over the same dataset
+object. tf.data re-executes the source once per branch, and TFDS with `shuffle_files=True`
+reshuffles shard order on every iteration — so the two branches enumerated *different orders* and
+the modulo partitioned two unrelated sequences. Measured on the validation hard negatives: **648
+images appeared in both branches and another 648 appeared in neither**, collapsing 5,250 nominal
+elements to 4,602 unique. The training set was quietly wrong for every run before this. Fixed by
+making the source deterministic *and* deciding the split inside a single element pass with
+`tf.cond`, so it stays correct even if someone re-enables shuffling.
+
+**6. `shuffle_files=False` does not give you a deterministic dataset.** TFDS interleaves shards and
+every `map` here uses `num_parallel_calls`; both reorder freely. Since augmentation seeds are
+derived from the `enumerate` index, a reordered source silently reassigns every seed and every
+screen decision. Needs an explicit `tf.data.Options()` with `deterministic = True`.
+
+**7. A shuffle buffer cannot subsample a decoded image dataset.** `.shuffle(8192).take(n)` over
+59k easy negatives looked fine but was structurally impossible: at 224×224×3 float32, a buffer
+covering the source would need ~35 GB, and a small buffer biases toward whichever classes come
+first. It only ever worked by accident, because the reshuffling source in bug #5 pre-mixed it.
+Replaced with Bresenham index striding — deterministic, exact, and free.
+
+**8. A threshold calibrated on float scores does not survive quantization.** The operating point
+was picked from the Keras model and copied verbatim into the int8 model's metadata. Quantization
+moves the score distribution, so the advertised 2.0% false-positive cap was really **2.15%**. The
+export step already ran the full split through the int8 interpreter, so it had every score needed
+to recalibrate — it just wasn't using them.
+
+**9. `sin(n·π)` is zero for every integer n.** The screen effect's scanline term was
+`tf.sin(ys * math.pi)` where `ys` is an integer pixel row. It had been contributing exactly nothing
+since it was written. Dead code that reads as live code, in a file with no assertions on its
+output.
+
+Bug #5 has a mobile twin worth its own line: `vision-camera-resize-plugin` returns `float32` in
+`[0,1]`, but the normalization constants in `metadata.json` are stated in the byte domain `[0,255]`.
+Applying them directly pinned every pixel to −1.0, so the model saw a black frame on **every single
+camera frame**. That path had never worked. The fix keeps reading `scale`/`offset` from metadata and
+maps into the byte domain first, rather than hardcoding `p * 2 - 1`.
+
+The through-line: **test the artifact you ship, on the client you ship it on.** Most of these were
+invisible from inside the training code, and the worst three were invisible from anywhere — they
+needed someone to count elements and compare orders rather than read the code and nod.
+
+---
+
+## Known limitations
+
+**The validation split does triple duty.** It drives early stopping, threshold selection, and the
+final reported metrics. That makes the headline numbers optimistic: the threshold is chosen on the
+same images it is then scored against. A proper three-way split is the right fix. It is not done
+here, so read the reported precision and recall as an upper bound rather than an estimate of
+field performance.
+
+**Web inference is forced to WASM.** The WebGPU backend disagreed with the Python reference by up
+to 0.082 on identical input tensors, which is enough to flip a verdict near the threshold. WASM
+matches Python exactly across the test images. Correctness over speed, but it is a real
+performance cost that has not been benchmarked in the camera loop.
 
 ---
 
