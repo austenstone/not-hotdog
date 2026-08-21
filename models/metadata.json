@@ -16,16 +16,19 @@
     "not_hotdog",
     "hotdog"
   ],
-  "threshold": 0.40152978897094727,
-  "gitSha": "9801632",
+  "threshold": 0.55078125,
+  "gitSha": "5a4626e",
   "sizeBytes": {
     "float32": 10203216,
     "int8": 3072128
   },
   "metrics": {
     "evaluated": 13750,
-    "accuracy": 0.9580363636363637,
-    "hotdogPrecision": 0.8184955141476881,
-    "hotdogRecall": 0.7906666666666666
+    "accuracy": 0.9576,
+    "hotdogPrecision": 0.8344274252370533,
+    "hotdogRecall": 0.7626666666666667,
+    "falsePositiveRate": 0.018530612244897958,
+    "targetFalsePositiveRate": 0.02,
+    "floatThreshold": 0.46738776564598083
   }
 }
