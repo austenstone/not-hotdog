@@ -128,30 +128,51 @@ drift between platforms.
 
 ## Results
 
-Measured over the full 13,750-image held-out validation split.
+Measured over the full 13,750-image held-out validation split, after the dataset repair described
+in bugs 5–7 below.
 
-| | Threshold | Accuracy | Precision | Recall | F1 |
-| --- | --- | --- | --- | --- | --- |
-| Stage A (head only) | 0.8338 | 0.959 | 0.829 | 0.792 | 0.810 |
-| Stage B (fine-tuned) | 0.4015 | **0.961** | **0.846** | 0.787 | **0.815** |
-| Exported int8 `.tflite` | 0.4015 | 0.958 | 0.818 | 0.791 | 0.804 |
+| | Threshold | Accuracy | Precision | Recall | F1 | FPR |
+| --- | --- | --- | --- | --- | --- | --- |
+| Stage B (fine-tuned, float32) | 0.4674 | **0.959** | 0.829 | **0.787** | **0.808** | — |
+| Exported int8 `.tflite` | 0.5508 | 0.958 | **0.834** | 0.763 | 0.797 | **1.85%** |
 
-Quantization costs about 0.3 points of accuracy for a **70% smaller** file — 10.20 MB float32 down
-to **3.07 MB** int8.
+The two thresholds differ because they are calibrated against two different models. Quantization
+shifts the score distribution, so the operating point is re-picked on int8 scores by the same
+FPR-capped policy rather than inherited from the float model — see bug 8.
+
+Quantization costs about 0.15 points of accuracy for a **70% smaller** file — 10.20 MB float32
+down to **3.07 MB** int8.
+
+### Against the previously shipped model
+
+The old artifact was trained on the corrupted hard-negative stream and shipped a float-calibrated
+threshold, which put it at **2.15% FPR against its own advertised 2.0% cap**. Comparing headline
+numbers against it directly is invalid — it bought recall with false positives it was not allowed
+to spend. Forcing both models to a legal operating point with the same policy, on the same
+corrected validation split:
+
+| | old | new |
+| --- | --- | --- |
+| Accuracy | 0.9554 | **0.9576** |
+| Precision | 0.8254 | **0.8344** |
+| Recall | 0.7500 | **0.7627** |
+| FPR | 1.94% | **1.85%** |
+
+Better on every axis, at a lower false-positive rate.
 
 False positives by group, at the Stage B operating point:
 
 | Group | Rate | Read |
 | --- | --- | --- |
 | Non-food (Imagenette) | **0 / 2,000** | Never fires on a dog, a chainsaw, or a church |
-| Easy negative (other foods) | 23 / 5,000 | 0.5% |
-| Hard negative (lookalikes) | 192 / 5,250 | 3.7% — where essentially all the error lives |
+| Easy negative (other foods) | 11 / 5,000 | 0.2% |
+| Hard negative (lookalikes) | 233 / 5,250 | 4.4% — where essentially all the error lives |
 
-And recall: 782 / 1,000 plain hotdogs, plus **398 / 500 hotdogs photographed through a screen** —
+And recall: 775 / 1,000 plain hotdogs, plus **406 / 500 hotdogs photographed through a screen** —
 the synthesized moiré training data works.
 
-Worst lookalikes: `hamburger` 7.3%, `spring_rolls` 6.8%, `lobster_roll_sandwich` 6.7%,
-`club_sandwich` 6.2%. Exactly the bread-adjacent, red/brown, roughly cylindrical foods you'd
+Worst lookalikes: `hamburger` 9.2%, `breakfast_burrito` 7.6%, `lobster_roll_sandwich` 6.8%,
+`french_fries` 6.4%. Exactly the bread-adjacent, red/brown, roughly cylindrical foods you'd
 predict, which is the reassuring outcome — the model is failing for legible reasons.
 
 ---
@@ -189,7 +210,7 @@ if `lobster_roll_sandwich` dominates it, the answer is better augmentation, not 
 
 ---
 
-## Nine bugs worth documenting
+## Ten bugs worth documenting
 
 Every one of these produced plausible-looking output while being wrong, which is the dangerous kind.
 
@@ -245,6 +266,16 @@ to recalibrate — it just wasn't using them.
 `tf.sin(ys * math.pi)` where `ys` is an integer pixel row. It had been contributing exactly nothing
 since it was written. Dead code that reads as live code, in a file with no assertions on its
 output.
+
+**10. A regression gate that compares metrics across operating points reports fiction.** Precision
+and recall are a single point read off an ROC curve, and the gate diffed them against whatever the
+last build happened to record. After bug 8 was fixed, the retrained model — better on accuracy,
+precision, recall *and* false-positive rate when both are held at a legal operating point — was
+flagged as a 0.028 recall regression, purely because the baseline had been measured at an illegal
+2.15% FPR. The gate already refused to diff builds that scored different images; it now applies the
+same reasoning to builds read at different points on the curve. It stays armed for everything
+after: every build records its rate, and the absolute cap is checked independently, so a model
+cannot dodge the comparison by quietly moving its threshold.
 
 Bug #5 has a mobile twin worth its own line: `vision-camera-resize-plugin` returns `float32` in
 `[0,1]`, but the normalization constants in `metadata.json` are stated in the byte domain `[0,255]`.
