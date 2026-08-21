@@ -87,9 +87,22 @@ try {
 // Two builds are only comparable when they scored the same images. A metric measured over a
 // different evaluation set differs by sampling noise alone, which would make this gate fire on
 // a methodology change and stay quiet on a real regression of the same magnitude.
+//
+// The same argument applies to the operating point. Precision and recall are a single point read
+// off an ROC curve, so they only mean the same thing when both builds were read at a comparable
+// point on it. Builds predating threshold recalibration recorded no false-positive rate at all:
+// their threshold was calibrated against the float model and the int8 model that shipped landed
+// wherever it landed -- measured at 2.15% against an advertised 2.0% cap. Those numbers bought
+// recall with false positives the model was never allowed to spend, so diffing against them
+// reports a regression for a build that is strictly better at a legal operating point.
+//
+// This does not open a hole. Every build from here on records its rate, and the absolute cap
+// above is checked independently, so a future model cannot dodge this comparison by quietly
+// moving its threshold -- it would still be compared, and still be caught.
 const comparable =
   typeof metadata.metrics?.evaluated === 'number' &&
-  metadata.metrics.evaluated === previous?.metrics?.evaluated;
+  metadata.metrics.evaluated === previous?.metrics?.evaluated &&
+  typeof previous?.metrics?.falsePositiveRate === 'number';
 
 const rows = TRACKED_METRICS.map((key) => {
   const current = metadata.metrics?.[key];
@@ -125,6 +138,20 @@ console.log(
 console.log('| Metric | This build | Base | Delta |');
 console.log('| --- | --- | --- | --- |');
 console.log(rows.join('\n'));
+
+if (previous && !comparable) {
+  const reason =
+    metadata.metrics?.evaluated !== previous?.metrics?.evaluated
+      ? `the base scored ${previous?.metrics?.evaluated ?? 'an unrecorded number of'} images and this build scored ${metadata.metrics?.evaluated}`
+      : 'the base recorded no false-positive rate, so the operating point its precision and recall were read at is unknown';
+  console.log(`\n> Deltas suppressed: ${reason}.`);
+}
+
+if (typeof fpr === 'number') {
+  console.log(
+    `\n**False positive rate** ${(fpr * 100).toFixed(2)}% of ${(fprTarget * 100).toFixed(2)}% cap`,
+  );
+}
 
 if (failures.length) {
   console.log('\n### Failures\n');
